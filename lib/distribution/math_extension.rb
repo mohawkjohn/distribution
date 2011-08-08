@@ -224,8 +224,108 @@ module Distribution
     # Should be replaced by
     # http://lib.stat.cmu.edu/apstat/63
     def incomplete_beta(x,a,b)
-      raise "Doesn't work"
+      IncompleteBeta.i(a,b,x)
     end
+
+    # Gauss-Legendre Quadrature: abscissas and weights
+    # From Numerical Recipes, p. 262-263. (Called Gauleg18 there.)
+    # Needed for Incomplete Gamma and Incomplete Beta.
+    module GaussLegendre
+      NGAU = 18
+      Y = [0.0021695375159141994,
+           0.011413521097787704, 0.027972308950302116, 0.051727015600492421,
+           0.082502225484340941, 0.12007019910960293, 0.16415283300752470,
+           0.21442376986779355, 0.27051082840644336, 0.33199876341447887,
+           0.39843234186401943, 0.46931971407375483, 0.54413605556657973,
+           0.62232745288031077, 0.70331500465597174, 0.78649910768313447,
+           0.87126389619061517, 0.95698180152629142]
+      W = [0.0055657196642445571,
+           0.012915947284065419, 0.020181515297735382, 0.027298621498568734,
+           0.034213810770299537, 0.040875750923643261, 0.047235083490265582,
+           0.053244713977759692, 0.058860144245324798, 0.064039797355015485,
+           0.068745323835736408, 0.072941885005653087, 0.076598410645870640,
+           0.079687828912071670, 0.082187266704339706, 0.084078218979661945,
+           0.085346685739338721, 0.085983275670394821]
+    end
+
+    # From Numerical Recipes, p. 272-273
+    module IncompleteBeta
+      SWITCH  = 3000
+      EPS     = Float::EPSILON
+      FPMIN   = Float::MIN / EPS
+      
+      class << self
+        def i(a,b,x)
+          return x if x == 0.0 || x == 1.0
+          raise(ArgumentError, "x out of range") if x < 0.0 || x > 1.0
+          raise(ArgumentError, "a and/or b out of range") if a <= 0.0 || b <= 0.0
+          return quadrature(a,b,x) if (a > SWITCH && b > SWITCH)
+          bt = Math.exp(Math.loggamma(a+b) - Math.loggamma(a) - Math.loggamma(b) + a*Math.log(x) + b*Math.log(1.0-x))
+          if x < (a+1.0)/(a+b+2.0)
+            bt * continued_fraction(a,b,x)/a.to_f
+          else
+            1.0 - bt * continued_fraction(b,a,1.0-x)/b
+          end
+        end
+
+        def continued_fraction(a,b,x)
+          qab = (a+b).to_f
+          qap = a+1.0
+          qam = a-1.0
+          c   = 1.0
+          d   = 1.0 - qab*x/qap
+          d   = FPMIN if d.abs < FPMIN
+          d   = 1.0 / d
+          h   = d
+          1.upto(9999).each do |m|
+            m2 = 2*m
+            aa = m*(b-m)*x / ((qam+m2)*(a+m2))
+            d  = 1.0 + aa*d
+            d  = FPMIN if d.abs < FPMIN
+            c  = 1.0 + aa/c
+            c  = FPMIN if c.abs < FPMIN
+            d  = 1.0 / d
+            h *= d*c
+            aa = -(a+m)*(qab+m)*x/((a+m2)*(qap+m2))
+            d  = 1.0 + aa*d
+            d  = FPMIN if d.abs < FPMIN
+            c  = 1.0 + aa/c
+            c  = FPMIN if c.abs < FPMIN
+            d  = 1.0 / d
+            del= d*c
+            h *= del
+            break if (del-1.0).abs <= EPS
+          end
+          h
+        end
+
+        def quadrature(a, b, x)
+          a1    = a-1.0
+          b1    = b-1.0
+          mu    = a/(a+b).to_f
+          lnmu  = Math.log(mu)
+          lnmuc = Math.log(1.0-mu)
+          t     = Math.sqrt(a*b / (Math.sqrt(a+b)*(a+b+1.0))) #NR has 'SQR' for the second sqrt. May be a typo.
+          xu    = nil
+          if (x > a/(a+b).to_f)
+            return 1.0 if x >= 1.0
+            xu = [1.0, [mu+10.0*t, x+5.0*t].max].min
+          else
+            return 0.0 if x <= 0.0
+            xu = [0.0, [mu-10.0*t, x-5.0*t].min].max
+          end
+          
+          sum = 0
+          0.upto(17).each do |j|
+            t    = x + (xu-x)*GaussLegendre::Y[j]
+            sum += GaussLegendre::W[j] * Math.exp(a1*(Math.log(t)-lnmu)+b1*(Math.log(1-t)-lnmuc))
+          end
+          ans = sum*(xu-x)*Math.exp(a1*lnmu-Math.loggamma(a)+b1*lnmuc-Math.loggamma(b)+Math.loggamma(a+b))
+          return ans > 0.0 ? 1.0 - ans : -ans
+        end
+      end
+    end
+
     
     # Rising factorial
     def rising_factorial(x,n)
